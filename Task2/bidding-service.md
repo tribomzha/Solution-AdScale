@@ -14,6 +14,7 @@
 | tatus        | ENUM      | Активен, заблокирован, удалён     |     |
 | created_at   | TIMESTAMP | Время создания                    |     |
 | last_seen_at | TIMESTAMP | Последняя активность              |     |
+
 ### subject_identifier Поиск субъекта по внешнему ID
 
 | Поле                 | Тип       | Назначение              |
@@ -27,6 +28,7 @@
 | valid_from           | TIMESTAMP | Начало действия         |
 | valid_until          | TIMESTAMP | Окончание действия      |
 | last_seen_at         | TIMESTAMP | Последнее использование |
+
 ### subject_profile Профиль пользователя
 
 | Поле        | Тип       | Назначение             |
@@ -37,6 +39,7 @@
 | source      | STRING    | Источник данных        |
 | updated_at  | TIMESTAMP | Время обновления       |
 | valid_until | TIMESTAMP | Срок актуальности      |
+
 ### subject_attribute Атрибуты пользователя
 
 | Поле            | Тип       | Назначение             |
@@ -48,6 +51,7 @@
 | source          | STRING    | Источник               |
 | updated_at      | TIMESTAMP | Время обновления       |
 | valid_until     | TIMESTAMP | Срок актуальности      |
+
 ### segment Справочник сегментов
 
 | Поле         | Тип              | Назначение                  |
@@ -61,6 +65,7 @@
 | version      | INTEGER          | Версия                      |
 | created_at   | TIMESTAMP        | Время создания              |
 | updated_at   | TIMESTAMP        | Время изменения             |
+
 ### segment_membership Сегменты пользователя
 
 | Поле         | Тип              | Назначение                  |
@@ -90,6 +95,7 @@
 | end_at              | TIMESTAMP | Окончание активности             |
 | version             | INTEGER   | Версия данных                    |
 | updated_at          | TIMESTAMP | Время обновления                 |
+
 ### candidate_placement Контекст размещения 
 
 | Поле         | Тип     | Назначение                |
@@ -97,6 +103,7 @@
 | candidate_id | UUID    | Кандидат                  |
 | placement_id | STRING  | Место показа              |
 | included     | BOOLEAN | Разрешение или исключение |
+
 ### targeting_policy Правила таргетинга
 
 | Поле                 | Тип       | Назначение             |

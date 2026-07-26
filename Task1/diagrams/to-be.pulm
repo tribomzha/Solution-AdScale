@@ -25,23 +25,23 @@ System_Boundary(delivery, "AdScale: Delivery (Core Domain)") {
 
 System_Boundary(ad, "AdScale: AD (Core Domain)") {
 
-    Container(adApi, "AD API", "Node.js", "Запросы, кадидаты, реклама")
+    Container(adApi, "AD API", "Node.js", "Запросы, кандидаты, реклама")
     Container(adLogic, "AD Business Logic", "Java", "определение пользователя, подбор кандидатов в рекламу")
     Container(adDb, "AD DB", "PostgreSQL", "Данные для таргетинга")
 }
 
 System_Boundary(auction, "AdScale: Auction (Core Domain)") {
 
-    Container(auctionApi, "Auction API", "C++", "Ставки, компании")
+    Container(auctionApi, "Auction API", "C++", "Ставки, кампании")
     Container(auctionLogic, "Auction Business Logic", "C++", "определение пользователя, подбор кандидатов в рекламу")
-    Container(auctionDb, "Auction DB", "PostgreSQL", "Ставки и компании")
+    Container(auctionDb, "Auction DB", "PostgreSQL", "Ставки и кампании")
 }
 
 System_Boundary(stats, "AdScale: Stats (Core Domain)") {
 
-    Container(statsApi, "Stats API", "Python", "Рекламные компании, показы, клики")
+    Container(statsApi, "Stats API", "Python", "Рекламные кампании, показы, клики")
     Container(statsLogic, "Stats Business Logic", "Python", "сохранение показов, кликов")
-    Container(statsDb, "Stats DB", "clickHouse", "Рекламные компании, показы, клики")
+    Container(statsDb, "Stats DB", "clickHouse", "Рекламные кампании, показы, клики")
 }
 
 System_Boundary(financial, "AdScale: Financial (Core Domain)") {
@@ -55,13 +55,14 @@ System_Boundary(analytics, "AdScale: Analytics (Supporting Domain)") {
 
     Container(analyticsApi, "Analytics API", "Go", "Аналитика по показам, кликам")
     Container(analyticsLogic, "Analytics Business Logic", "Go", "Аналитика по показам, кликам")
+    Container(analyticsDB, "Analytics DB", "PostgreSQL", "Отчеты, бизнес-метрики")
 }
 
 
 System_Boundary(adCabinet, "AdScale: Advertiser Cabinet (Core Domain)") {
 
-    Container(adCabinetApi, "Advertiser Cabinet API", "Node.js + JS", "Web UI, управление компаниями, отчетность")
-    Container(adCabinetLogic, "Advertiser Cabinet Business Logic", "Node.js", "Web UI, управление компаниями, отчетность")
+    Container(adCabinetApi, "Advertiser Cabinet API", "Node.js + JS", "Web UI, управление кампаниями, отчетность")
+    Container(adCabinetLogic, "Advertiser Cabinet Business Logic", "Node.js", "Web UI, управление кампаниями, отчетность")
     Container(adCabinetCache, "Advertiser Cabinet Cache", "Redis", "Кэш данных по рекламодателю")
     Container(financialDb, "Financial DB", "PostgreSQL", "компании, отчетность")
 }
@@ -101,6 +102,8 @@ Rel(auctionLogic, auctionDb,"Чтение ставок и компаний", "JD
 Rel(adCabinetLogic, adCabinetCache,"Кэш отчетов/активностей", "RESP")
 Rel(statsLogic, statsDb,"Данные аналитики", "Native Protocol")
 Rel(financialLogic, financialDb,"Транзакции и балансы", "JDBC")
+Rel(analyticsLogic, analyticsDB,"Отчеты, бизнес-метрики", "JDBC")
+
 
 
 @enduml
