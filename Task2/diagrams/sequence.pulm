@@ -1,0 +1,200 @@
+@startuml DSP_API_Gateway_Sequence_Diagram
+
+title Обработка запроса ставки от внешней DSP через API Gateway
+
+autonumber
+hide footbox
+
+actor "Внешняя DSP" as DSP
+
+box "API Gateway" #LightBlue
+participant "External API Listener" as Listener
+participant "Authentication" as Auth
+participant "Authorization" as Authorization
+participant "Configuration Cache" as Config
+participant "Request Parser" as Parser
+participant "Contract Validator" as Validator
+participant "DSP Adapter" as Adapter
+participant "Request Context Builder" as Context
+participant "Replay Protection" as Replay
+participant "Rate Limiter" as RateLimiter
+participant "Concurrency Limiter" as ConcurrencyLimiter
+participant "Deadline Manager" as Deadline
+participant "Admission Controller" as Admission
+participant "Route Resolver" as Router
+participant "Circuit Breaker" as CircuitBreaker
+participant "Internal Service Client" as Client
+participant "Response Validator" as ResponseValidator
+participant "Response Adapter" as ResponseAdapter
+participant "Error Mapper" as ErrorMapper
+participant "Response Deadline Guard" as ResponseGuard
+participant "Telemetry" as Telemetry
+participant "Security Audit" as Audit
+end box
+
+participant "AD API" as BidService
+participant "Платформа наблюдаемости" as Observability
+
+DSP -> Listener: POST /api/v1/bid-requests\nHTTPS / JSON
+
+Listener -> Auth: Проверить учётные данные DSP
+Auth -> Config: Получить профиль DSP
+Config --> Auth: DSPConfig
+
+alt DSP не аутентифицирована
+    Auth -> Audit: Зафиксировать ошибку аутентификации
+    Auth -> ErrorMapper: AuthenticationError
+    ErrorMapper --> Listener: 401 Unauthorized
+    Listener --> DSP: 401 Unauthorized
+else DSP аутентифицирована
+    Auth -> Authorization: Передать dspId и запрос
+
+    alt DSP не имеет права вызывать API
+        Authorization -> Audit: Зафиксировать нарушение доступа
+        Authorization -> ErrorMapper: AuthorizationError
+        ErrorMapper --> Listener: 403 Forbidden
+        Listener --> DSP: 403 Forbidden
+    else Доступ разрешён
+        Authorization -> Parser: Передать тело запроса
+
+        alt Некорректный JSON или формат
+            Parser -> ErrorMapper: ParseError
+            ErrorMapper --> Listener: 400 Bad Request
+            Listener --> DSP: 400 Bad Request
+        else Запрос разобран
+            Parser -> Validator: Проверить внешний контракт
+
+            alt Контракт невалиден
+                Validator -> ErrorMapper: ValidationError
+                ErrorMapper --> Listener: 400 / 422
+                Listener --> DSP: 400 / 422
+            else Контракт валиден
+                Validator -> Adapter: Преобразовать внешний запрос
+                Adapter -> Context: Передать нормализованный запрос
+                Context -> Context: Создать requestId, traceId,\ndspId и время приёма
+                Context -> Replay: Проверить повтор запроса
+
+                alt RequestId уже использован с другим телом
+                    Replay -> Audit: Зафиксировать конфликт requestId
+                    Replay -> ErrorMapper: RequestConflict
+                    ErrorMapper --> Listener: 409 Conflict
+                    Listener --> DSP: 409 Conflict
+                else Повтор идентичного запроса и ответ сохранён
+                    Replay --> Listener: Сохранённый ответ
+                    Listener --> DSP: 200 / 204
+                else Новый запрос
+                    Replay -> RateLimiter: Проверить RPS DSP
+
+                    alt Превышен rate limit
+                        RateLimiter -> Audit: Зафиксировать превышение лимита
+                        RateLimiter -> Telemetry: rate_limited
+                        RateLimiter -> ErrorMapper: RateLimitExceeded
+                        ErrorMapper --> Listener: 429 Too Many Requests
+                        Listener --> DSP: 429 Too Many Requests
+                    else RPS в пределах лимита
+                        RateLimiter -> ConcurrencyLimiter: Проверить количество in-flight запросов
+
+                        alt Превышен concurrency limit
+                            ConcurrencyLimiter -> Telemetry: concurrency_rejected
+                            ConcurrencyLimiter -> ErrorMapper: ConcurrencyLimitExceeded
+                            ErrorMapper --> Listener: 429 / 503
+                            Listener --> DSP: 429 / 503
+                        else Запрос допущен
+                            ConcurrencyLimiter -> Deadline: Рассчитать сквозной deadline
+                            Deadline -> Config: Получить timeout policy
+                            Config --> Deadline: defaultTimeout, maxTimeout, reserve
+                            Deadline -> Deadline: Рассчитать deadlineAt и remainingTime
+
+                            alt Недостаточно времени для обработки
+                                Deadline -> Telemetry: deadline_rejected
+                                Deadline -> ErrorMapper: DeadlineTooShort
+                                ErrorMapper --> Listener: 504 или no-bid
+                                Listener --> DSP: 504 или 204
+                            else Времени достаточно
+                                Deadline -> Admission: Проверить состояние Gateway и платформы
+
+                                alt Платформа перегружена
+                                    Admission -> Telemetry: load_shedding
+                                    Admission -> ErrorMapper: ServiceOverloaded
+                                    ErrorMapper --> Listener: 503 Service Unavailable
+                                    Listener --> DSP: 503 Service Unavailable
+                                else Запрос принят
+                                    Admission -> Router: Выбрать внутренний маршрут
+                                    Router -> Config: Получить routing policy
+                                    Config --> Router: Основной и резервный маршруты
+                                    Router -> CircuitBreaker: Проверить основной маршрут
+
+                                    alt Circuit Breaker открыт и резерв отсутствует
+                                        CircuitBreaker -> Telemetry: circuit_open
+                                        CircuitBreaker -> ErrorMapper: UpstreamUnavailable
+                                        ErrorMapper --> ResponseGuard: 503 Service Unavailable
+                                    else Основной маршрут доступен
+                                        CircuitBreaker -> Client: Разрешить внутренний вызов
+                                        Client -> BidService: Запрос ставки\nrequestId, dspId, deadlineAt
+
+                                        alt Внутренний сервис вернул ставку
+                                            BidService --> Client: BidResponse
+                                            Client -> ResponseValidator: Проверить внутренний ответ
+
+                                            alt Ответ внутреннего сервиса невалиден
+                                                ResponseValidator -> Telemetry: invalid_upstream_response
+                                                ResponseValidator -> ErrorMapper: InvalidUpstreamResponse
+                                                ErrorMapper --> ResponseGuard: 502 Bad Gateway
+                                            else Ответ валиден
+                                                ResponseValidator -> ResponseAdapter: Преобразовать ответ под DSP
+                                                ResponseAdapter -> ResponseGuard: Внешний BidResponse
+                                            end
+
+                                        else Внутренний сервис вернул no-bid
+                                            BidService --> Client: NoBid
+                                            Client -> ResponseAdapter: Преобразовать no-bid
+                                            ResponseAdapter -> ResponseGuard: 204 No Content
+
+                                        else Внутренний сервис вернул ошибку
+                                            BidService --> Client: 5xx
+                                            Client -> CircuitBreaker: Зарегистрировать ошибку
+                                            CircuitBreaker -> Telemetry: upstream_error
+                                            Client -> ErrorMapper: UpstreamError
+                                            ErrorMapper --> ResponseGuard: 502 / 503
+
+                                        else Внутренний сервис не ответил вовремя
+                                            Client -> Client: Отменить вызов по timeout
+                                            Client -> CircuitBreaker: Зарегистрировать timeout
+                                            CircuitBreaker -> Telemetry: upstream_timeout
+                                            Client -> ErrorMapper: UpstreamTimeout
+                                            ErrorMapper --> ResponseGuard: 504 Gateway Timeout
+                                        end
+                                    else Основной маршрут недоступен, резерв доступен
+                                        CircuitBreaker -> Router: Запросить резервный маршрут
+                                        Router -> Client: Передать резервный endpoint
+                                        Client -> BidService: Запрос ставки через резервный маршрут
+                                        BidService --> Client: BidResponse / NoBid / Error
+                                        Client -> ResponseValidator: Проверить ответ
+                                        ResponseValidator -> ResponseAdapter: Преобразовать ответ
+                                        ResponseAdapter -> ResponseGuard: Внешний ответ
+                                    end
+
+                                    ResponseGuard -> ResponseGuard: Проверить deadline перед отправкой
+
+                                    alt Deadline истёк
+                                        ResponseGuard -> Telemetry: response_deadline_exceeded
+                                        ResponseGuard --> Listener: 504 или no-bid
+                                        Listener --> DSP: 504 или 204
+                                    else Ответ сформирован вовремя
+                                        ResponseGuard --> Listener: 200 / 204 / 4xx / 5xx
+                                        Listener --> DSP: Результат обработки
+                                    end
+
+                                    Listener -> Telemetry: request_completed, status, latency
+                                    Telemetry -> Observability: Метрики и трассировки\nOTLP
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+@enduml

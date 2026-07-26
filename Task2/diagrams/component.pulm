@@ -1,0 +1,90 @@
+@startuml DSP_API_Gateway_Component_Diagram
+
+!includeurl https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title API Gateway для интеграции внешней DSP — Component Diagram
+
+LAYOUT_LEFT_RIGHT()
+
+System_Ext(external_dsp, "Внешняя DSP", "Внешний потребитель, отправляющий запросы ставок")
+
+System_Boundary(our_platform, "ADScale") {
+
+    Container(api_gateway, "API Gateway") {
+        Component(api_listener, "External API Listener", "HTTP Server", "Принимает HTTPS-запросы ставок от внешних DSP, проверяет HTTP-метод, Content-Type и размер тела")
+        Component(authentication, "DSP Authentication", "mTLS / OAuth 2.0 / API Key", "Идентифицирует внешнюю DSP и проверяет действительность её учётных данных")
+        Component(authorization, "Authorization", "Policy Engine", "Проверяет право DSP вызывать API, использовать версию контракта, рекламный формат и окружение")
+        Component(request_parser, "Request Parser", "JSON Parser", "Разбирает входящий запрос и формирует техническое представление данных")
+        Component(request_validator, "Contract Validator", "Schema Validator", "Проверяет обязательные поля, типы, ограничения и поддерживаемую версию API")
+        Component(dsp_adapter, "DSP Adapter", "Adapter", "Преобразует внешний контракт конкретной DSP в единый внутренний контракт платформы")
+        Component(context_builder, "Request Context Builder", "Application Component", "Формирует requestId, dspId, traceId, время приёма, приоритет и сквозной deadline")
+        Component(replay_protection, "Replay Protection", "Idempotency Cache", "Обнаруживает повторные запросы и конфликтующее использование requestId")
+        Component(rate_limiter, "Rate Limiter", "Token Bucket", "Ограничивает частоту запросов отдельно для каждой DSP")
+        Component(concurrency_limiter, "Concurrency Limiter", "In-flight Limiter", "Ограничивает количество одновременно обрабатываемых запросов DSP и Gateway в целом")
+        Component(admission_controller, "Admission Controller", "Load Shedding", "Принимает итоговое решение о допуске запроса с учётом лимитов, нагрузки и оставшегося времени")
+        Component(deadline_manager, "Deadline Manager", "Timeout Policy", "Рассчитывает сквозной deadline и доступный бюджет времени для внутреннего вызова")
+        Component(route_resolver, "Route Resolver", "Routing Engine", "Выбирает внутренний сервис, версию, регион, основной или резервный маршрут")
+        Component(circuit_breaker, "Circuit Breaker", "Resilience Pattern", "Блокирует вызовы деградировавшего внутреннего сервиса и управляет состояниями CLOSED, OPEN и HALF_OPEN")
+        Component(upstream_client, "Internal Service Client", "HTTP / gRPC Client", "Передаёт нормализованный запрос во внутренний сервис обработки ставок")
+        Component(response_validator, "Response Validator", "Schema Validator", "Проверяет структуру и техническую корректность ответа внутреннего сервиса")
+        Component(response_adapter, "Response Adapter", "Adapter", "Преобразует внутренний ответ в контракт конкретной DSP")
+        Component(error_mapper, "Error Mapper", "Application Component", "Преобразует внутренние ошибки в стабильные публичные HTTP-коды и сообщения")
+        Component(response_deadline_guard, "Response Deadline Guard", "Application Component", "Не позволяет вернуть DSP просроченный или уже неактуальный результат")
+        Component(AGWconfiguration, "AGW Configuration", "JSON", "Хранит локальный snapshot настроек AGW, лимитов, маршрутов и политик")
+        Component(telemetry, "Telemetry", "OpenTelemetry", "Формирует метрики, трассировки и технические события без блокировки основного потока")
+        Component(security_audit, "Security Audit", "Structured Logger", "Фиксирует ошибки аутентификации, блокировки, превышения лимитов и подозрительный трафик")
+    }
+
+    Container(adAPI, "AD API", "Internal API", "Обрабатывает запрос ставки и формирует бизнес-результат")
+    Container(telemetry_platform, "Платформа наблюдаемости", "Metrics / Logs / Traces", "Хранит метрики, трассировки, технические логи и аудит")
+}
+
+Rel(external_dsp, api_listener, "Отправляет запрос ставки", "HTTPS / JSON")
+Rel(api_listener, authentication, "Передаёт запрос и данные соединения")
+Rel(authentication, AGWconfiguration, "Получает профиль DSP")
+Rel(authentication, authorization, "Передаёт идентифицированную DSP")
+Rel(authorization, request_parser, "Передаёт разрешённый запрос")
+Rel(request_parser, request_validator, "Передаёт разобранный контракт")
+Rel(request_validator, dsp_adapter, "Передаёт валидный внешний запрос")
+Rel(dsp_adapter, context_builder, "Передаёт нормализованный запрос")
+Rel(context_builder, replay_protection, "Передаёт запрос для проверки requestId")
+Rel(replay_protection, rate_limiter, "Передаёт новый или допустимый повторный запрос")
+Rel(rate_limiter, concurrency_limiter, "Передаёт запрос в пределах RPS")
+Rel(concurrency_limiter, deadline_manager, "Передаёт запрос в пределах in-flight лимита")
+Rel(deadline_manager, admission_controller, "Передаёт запрос и оставшийся бюджет времени")
+Rel(admission_controller, route_resolver, "Допускает запрос к внутренней обработке")
+Rel(route_resolver, AGWconfiguration, "Получает правила маршрутизации")
+Rel(route_resolver, circuit_breaker, "Передаёт выбранный маршрут")
+Rel(circuit_breaker, upstream_client, "Разрешает вызов доступного маршрута")
+Rel(upstream_client, adAPI, "Передаёт запрос ставки и deadline", "Internal HTTP / gRPC")
+Rel(adAPI, upstream_client, "Возвращает ставку, отсутствие ставки или ошибку")
+Rel(upstream_client, response_validator, "Передаёт внутренний ответ")
+Rel(response_validator, response_adapter, "Передаёт корректный ответ")
+Rel(response_adapter, response_deadline_guard, "Передаёт внешний ответ DSP")
+Rel(response_deadline_guard, api_listener, "Возвращает результат до deadline")
+Rel(api_listener, external_dsp, "Возвращает ставку, no-bid или техническую ошибку", "HTTPS / JSON")
+Rel(authentication, error_mapper, "Передаёт ошибку аутентификации")
+Rel(authorization, error_mapper, "Передаёт ошибку авторизации")
+Rel(request_parser, error_mapper, "Передаёт ошибку формата")
+Rel(request_validator, error_mapper, "Передаёт ошибку контракта")
+Rel(replay_protection, error_mapper, "Передаёт информацию о конфликте или дубликате")
+Rel(rate_limiter, error_mapper, "Передаёт превышение RPS")
+Rel(concurrency_limiter, error_mapper, "Передаёт информацию о перегрузке")
+Rel(admission_controller, error_mapper, "Передаёт отказ в допуске запроса")
+Rel(circuit_breaker, error_mapper, "Передаёт информацию о недоступности маршрута")
+Rel(upstream_client, error_mapper, "Передаёт timeout или ошибку внутреннего сервиса")
+Rel(response_validator, error_mapper, "Передаёт ошибку внутреннего ответа")
+Rel(error_mapper, response_deadline_guard, "Передаёт публичный ответ об ошибке")
+Rel(api_listener, telemetry, "Передаёт метрики входящих запросов")
+Rel(authentication, security_audit, "Передаёт события безопасности")
+Rel(authorization, security_audit, "Передаёт события нарушения прав доступа")
+Rel(replay_protection, security_audit, "Передаёт события повторных и конфликтующих запросов")
+Rel(rate_limiter, security_audit, "Передаёт события превышения лимитов")
+Rel(upstream_client, telemetry, "Передаёт latency и ошибки внутреннего сервиса")
+Rel(circuit_breaker, telemetry, "Передаёт изменения состояния размыкателя")
+Rel(telemetry, telemetry_platform, "Экспортирует метрики и трассировки", "OTLP")
+Rel(security_audit, telemetry_platform, "Экспортирует аудит и события безопасности")
+
+SHOW_LEGEND()
+
+@enduml
