@@ -1,0 +1,108 @@
+@startuml
+title AdScale TO-BE Container Diagram
+
+top to bottom direction
+
+!includeurl https://raw.githubusercontent.com/RicardoNiepel/C4-PlantUML/master/C4_Component.puml
+LAYOUT_WITH_LEGEND()
+
+' ====================== Акторы ======================
+Person(advertiser, "Рекламодатель", "Управляет кампаниями, бюджетами и ставками через личный кабинет")
+Person_Ext(endUser, "Пользователь сайта/приложения", "Просматривает рекламу, кликает по баннерам")
+
+Container_Ext(apiGw, "API Gateway", "Kong / Nginx", "Routing, rate limit, auth, circuit breaker")
+
+System_Ext(dspPartner, "DSP-партнёр", "Отправляет bid requests, получает bid responses по OpenRTB")
+System_Ext(paymentGateway, "Платёжный шлюз", "Обработка пополнения рекламных бюджетов")
+
+' ====================== Монолит ======================
+System_Boundary(delivery, "AdScale: Delivery (Core Domain)") {
+
+    Container(deliveryApi, "Delivery API", "Node.js", "Реклама, клики")
+    Container(deliveryLogic, "Delivery Business Logic", "Java", "Подготовка разметки, обработка кликов")
+    Container(deliveryDb, "Delivery DB", "PostgreSQL", "Контент для рекламы")
+    Container(deliveryCache, "Delivery Cache", "Redis", "Кэш контента для рекламы, результатов аукционов")
+}
+
+System_Boundary(ad, "AdScale: AD (Core Domain)") {
+
+    Container(adApi, "AD API", "Node.js", "Запросы, кадидаты, реклама")
+    Container(adLogic, "AD Business Logic", "Java", "определение пользователя, подбор кандидатов в рекламу")
+    Container(adDb, "AD DB", "PostgreSQL", "Данные для таргетинга")
+}
+
+System_Boundary(auction, "AdScale: Auction (Core Domain)") {
+
+    Container(auctionApi, "Auction API", "C++", "Ставки, компании")
+    Container(auctionLogic, "Auction Business Logic", "C++", "определение пользователя, подбор кандидатов в рекламу")
+    Container(auctionDb, "Auction DB", "PostgreSQL", "Ставки и компании")
+}
+
+System_Boundary(stats, "AdScale: Stats (Core Domain)") {
+
+    Container(statsApi, "Stats API", "Python", "Рекламные компании, показы, клики")
+    Container(statsLogic, "Stats Business Logic", "Python", "сохранение показов, кликов")
+    Container(statsDb, "Stats DB", "clickHouse", "Рекламные компании, показы, клики")
+}
+
+System_Boundary(financial, "AdScale: Financial (Core Domain)") {
+
+    Container(financialApi, "Financial API", "Go", "Счета, балансы, транзакции")
+    Container(financialLogic, "Financial Business Logic", "Go", "Счета, балансы, транзакции")
+    Container(financialDb, "Financial DB", "PostgreSQL", "Счета, балансы, транзакции")
+}
+
+System_Boundary(analytics, "AdScale: Analytics (Supporting Domain)") {
+
+    Container(analyticsApi, "Analytics API", "Go", "Аналитика по показам, кликам")
+    Container(analyticsLogic, "Analytics Business Logic", "Go", "Аналитика по показам, кликам")
+}
+
+
+System_Boundary(adCabinet, "AdScale: Advertiser Cabinet (Core Domain)") {
+
+    Container(adCabinetApi, "Advertiser Cabinet API", "Node.js + JS", "Web UI, управление компаниями, отчетность")
+    Container(adCabinetLogic, "Advertiser Cabinet Business Logic", "Node.js", "Web UI, управление компаниями, отчетность")
+    Container(adCabinetCache, "Advertiser Cabinet Cache", "Redis", "Кэш данных по рекламодателю")
+    Container(financialDb, "Financial DB", "PostgreSQL", "компании, отчетность")
+}
+
+Container_Ext(kafka, "Apache Kafka", "Kafka 3.x", "Domain Events: booking.*, payment.*, catalog.*")
+
+'Пользаки в АГВ
+Rel(endUser, apiGw, "Просмотр рекламы и клики", "HTTPS")
+Rel(advertiser, apiGw, "Управляет кампаниями и бюджетами", "HTTPS")
+Rel(dspPartner, apiGw, "Bid requests / responses", "HTTPS / OpenRTB")
+
+'от АГВ до API
+
+Rel(apiGw, deliveryApi,"Просмотр рекламы и клики", "gRPC")
+Rel(apiGw, adApi,"Bid requests / responses", "gRPC")
+Rel(apiGw, adCabinetApi,"Управляет кампаниями и бюджетами", "gRPC")
+
+'Показ рекламы
+Rel(deliveryApi, auctionApi,"Просмотр рекламы и клики", "gRPC")
+Rel(auctionApi, adApi,"Просмотр рекламы и клики", "gRPC")
+Rel(deliveryLogic, kafka,"Запись просмотров и кликов", "kafka")
+Rel(deliveryLogic, deliveryDb,"Получение контента для рекламы", "JDBC")
+Rel(deliveryLogic, deliveryCache,"Получение контента для рекламы", "RESP")
+
+'управление компанией
+Rel(adCabinetApi, analyticsApi,"Получение аналитики", "gRPC")
+Rel(adCabinetApi, financialApi,"Управление финансами", "gRPC")
+Rel(financialApi, paymentGateway,"Пополение бюджета", "gRPC")
+
+'запись статистики
+Rel(statsLogic, kafka,"Чтение просмотров и кликов", "kafka")
+Rel(analyticsApi, statsApi,"Получение данных о просмотрах и кликах", "gRPC")
+
+
+'БД
+Rel(adLogic, adDb,"Чтение данных таргетинга", "JDBC")
+Rel(auctionLogic, auctionDb,"Чтение ставок и компаний", "JDBC")
+Rel(adCabinetLogic, adCabinetCache,"Кэш отчетов/активностей", "RESP")
+Rel(statsLogic, statsDb,"Данные аналитики", "Native Protocol")
+Rel(financialLogic, financialDb,"Транзакции и балансы", "JDBC")
+
+
+@enduml
